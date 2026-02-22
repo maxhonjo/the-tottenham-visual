@@ -165,7 +165,7 @@
 <div id="floor-label">—</div>
 
 <!-- Controls -->
-<div id="controls-hint">WASD · MOVE &nbsp;|&nbsp; MOUSE · LOOK &nbsp;|&nbsp; SCROLL · FAST MOVE &nbsp;|&nbsp; CLICK · INSPECT FLOOR</div>
+<div id="controls-hint">WASD · MOVE &nbsp;|&nbsp; MOUSE · LOOK &nbsp;|&nbsp; SCROLL · CYCLE FLOORS &nbsp;|&nbsp; SHIFT · FAST &nbsp;|&nbsp; CLICK · INSPECT</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -310,6 +310,48 @@ function makeEdges(mesh, color=0x4a90c4, opacity=0.6) {
   return lines;
 }
 
+// ── Canvas-based floor label (flat plane on top of unit) ──
+function makeFloorLabel(text, worldW, worldD, textColor='#e8f4fd', bgAlpha=0) {
+  // Canvas resolution proportional to world size
+  const PX = 128, PY = 64;
+  const c = document.createElement('canvas');
+  c.width = PX; c.height = PY;
+  const ctx = c.getContext('2d');
+
+  // Transparent background
+  ctx.clearRect(0, 0, PX, PY);
+
+  // Auto-size font to fit text in canvas width
+  const lines = text.split('\n');
+  const maxLine = lines.reduce((a, b) => a.length > b.length ? a : b, '');
+  let fontSize = Math.max(8, Math.min(22, Math.floor(PX * 0.85 / (maxLine.length * 0.55))));
+  ctx.font = `bold ${fontSize}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Draw each line
+  const lineH = fontSize * 1.2;
+  const startY = PY/2 - ((lines.length - 1) * lineH) / 2;
+  lines.forEach((line, i) => {
+    // subtle dark shadow for contrast
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillText(line, PX/2 + 1, startY + i * lineH + 1);
+    ctx.fillStyle = textColor;
+    ctx.fillText(line, PX/2, startY + i * lineH);
+  });
+
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, opacity: 0.9,
+    depthWrite: false, side: THREE.DoubleSide
+  });
+  const geo = new THREE.PlaneGeometry(worldW * 0.88, worldD * 0.88);
+  const plane = new THREE.Mesh(geo, mat);
+  plane.rotation.x = -Math.PI / 2;
+  plane.renderOrder = 2;
+  return plane;
+}
+
 // Floor plate builder
 function buildFloorSlab(floorKey, floorData) {
   const group = new THREE.Group();
@@ -413,6 +455,13 @@ function buildParkingFloor(group, y, fh) {
       space.position.set(svgX(sx + 49), y + 0.1, svgZ(sz + 24));
       const edges = makeEdges(space, 0xb8a83a, 0.4);
       space.userData = { floor: 'B', type: 'parking_space', id: `B-${String(r*10+c+1).padStart(3,'0')}` };
+
+      // Small label on parking space surface
+      const spid = `B-${String(r*10+c+1).padStart(3,'0')}`;
+      const plbl = makeFloorLabel(spid, spaceW - 0.3, spaceD - 0.3, '#c8b84a');
+      plbl.position.set(0, 0.09, 0);
+      space.add(plbl);
+
       group.add(space);
     }
   }
@@ -451,6 +500,13 @@ function buildLobbyFloor(group, y, fh) {
     box.castShadow = true;
     makeEdges(box, a.acc, 0.7);
     box.userData = { floor: 1, type: 'amenity', label: a.label };
+
+    // Label on top surface
+    const bw = svgDX(a.w), bd = svgDZ(a.d);
+    const lbl = makeFloorLabel(a.label, bw, bd, '#c8aaee');
+    lbl.position.set(0, fh*0.7/2 + 0.01, 0);
+    box.add(lbl);
+
     group.add(box);
   }
 
@@ -555,6 +611,14 @@ function addUnit(group, id, svgUx, svgUz, svgW, svgH, y, unitH, color, floorKey)
   unit.castShadow = true;
   makeEdges(unit, color, 0.4);
   unit.userData = { floor: floorKey, type: 'unit', id, color, svgW, svgH };
+
+  // Label on top surface
+  // Pick text color contrasting with unit color
+  const labelColor = color === 0xc48a3a ? '#f0d090' : color === 0x3ab87a ? '#a0f0c8' : '#90c8f0';
+  const label = makeFloorLabel(id, wx, wz, labelColor);
+  label.position.set(0, unitH / 2 + 0.01, 0);  // relative to unit center
+  unit.add(label);
+
   group.add(unit);
 }
 
@@ -565,24 +629,36 @@ function buildRooftopFloor(group, y, fh) {
   const pool = makeBox(svgDX(300), 0.5, svgDZ(120), 0x0a2030, 1, 0x3a90c4, 0.4);
   pool.position.set(svgX(490), y + fh/2 + 0.3, svgZ(200+60));
   makeEdges(pool, 0x3a90c4, 0.8);
+  const poolLbl = makeFloorLabel('POOL', svgDX(300), svgDZ(120), '#80d8f8');
+  poolLbl.position.set(0, 0.27, 0);
+  pool.add(poolLbl);
   group.add(pool);
 
   // Jacuzzi
   const jac = makeBox(svgDX(120), 0.5, svgDZ(120), 0x0a1a30, 1, 0x3ab87a, 0.4);
   jac.position.set(svgX(850), y + fh/2 + 0.3, svgZ(200+60));
   makeEdges(jac, 0x3ab87a, 0.8);
+  const jacLbl = makeFloorLabel('JACUZZI', svgDX(120), svgDZ(120), '#80f8c0');
+  jacLbl.position.set(0, 0.27, 0);
+  jac.add(jacLbl);
   group.add(jac);
 
   // Lounge area
   const lounge = makeBox(svgDX(600), 0.2, svgDZ(250), 0x081a10, 1, 0x3ab87a, 0.1);
   lounge.position.set(svgX(330), y + fh/2 + 0.1, svgZ(500+125));
   makeEdges(lounge, 0x3ab87a, 0.35);
+  const loungeLbl = makeFloorLabel('SKY LOUNGE', svgDX(600), svgDZ(250), '#80f8c0');
+  loungeLbl.position.set(0, 0.12, 0);
+  lounge.add(loungeLbl);
   group.add(lounge);
 
   // Sky deck
   const deck = makeBox(svgDX(500), 0.2, svgDZ(200), 0x0a1810, 1, 0x4ab87a, 0.1);
   deck.position.set(svgX(680), y + fh/2 + 0.1, svgZ(700+100));
   makeEdges(deck, 0x4ab87a, 0.35);
+  const deckLbl = makeFloorLabel('SKY DECK', svgDX(500), svgDZ(200), '#a0f8d0');
+  deckLbl.position.set(0, 0.12, 0);
+  deck.add(deckLbl);
   group.add(deck);
 }
 
@@ -723,7 +799,6 @@ const keys = {};
 let isPointerLocked = false;
 let yaw = 0, pitch = -0.25;
 const moveSpeed = 0.12, fastSpeed = 0.5;
-let scrollBoost = 0;
 
 canvas.addEventListener('click', () => {
   if (!isPointerLocked) {
@@ -745,10 +820,30 @@ document.addEventListener('mousemove', (e) => {
 document.addEventListener('keydown', e => { keys[e.code] = true; });
 document.addEventListener('keyup',   e => { keys[e.code] = false; });
 
-canvas.addEventListener('wheel', e => {
-  scrollBoost = e.deltaY * 0.008;
-  setTimeout(() => { scrollBoost = 0; }, 100);
-});
+// ── Scroll wheel → cycle floor selector ──
+const floorOrder = ['B', 1, 2, 3, 4, 5, 'RT', 'ALL', 'EXPLODE'];
+let currentFloorIdx = 7; // start at ALL
+
+window.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const delta = e.deltaY > 0 ? 1 : -1;
+  currentFloorIdx = (currentFloorIdx + delta + floorOrder.length) % floorOrder.length;
+  const newFloor = floorOrder[currentFloorIdx];
+  // find and click the matching button
+  const btns = document.querySelectorAll('.floor-btn');
+  let matchBtn = null;
+  btns.forEach(b => {
+    b.classList.remove('active');
+    if (b.textContent.trim() === String(newFloor) ||
+        (newFloor === 'RT' && b.textContent.trim() === 'ROOF') ||
+        (newFloor === 'ALL' && b.textContent.trim() === 'ALL') ||
+        (newFloor === 'EXPLODE' && b.textContent.trim() === 'EXPLODE')) {
+      matchBtn = b;
+    }
+  });
+  if (matchBtn) matchBtn.classList.add('active');
+  selectFloor(newFloor, matchBtn);
+}, { passive: false });
 
 function updateCamera() {
   const dir = new THREE.Vector3(
@@ -757,7 +852,10 @@ function updateCamera() {
     Math.cos(yaw) * Math.cos(pitch)
   ).normalize();
 
-  const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw)).normalize();
+  // right = cross(dir_flat, up) — corrected so A=left, D=right
+  const right = new THREE.Vector3(
+    Math.cos(yaw), 0, -Math.sin(yaw)
+  ).normalize();
   const up = new THREE.Vector3(0, 1, 0);
 
   let spd = moveSpeed;
@@ -765,15 +863,10 @@ function updateCamera() {
 
   if (keys['KeyW'] || keys['ArrowUp'])    camera.position.addScaledVector(dir, spd);
   if (keys['KeyS'] || keys['ArrowDown'])  camera.position.addScaledVector(dir, -spd);
-  if (keys['KeyA'] || keys['ArrowLeft'])  camera.position.addScaledVector(right, -spd);
-  if (keys['KeyD'] || keys['ArrowRight']) camera.position.addScaledVector(right, spd);
+  if (keys['KeyA'] || keys['ArrowLeft'])  camera.position.addScaledVector(right, spd);   // A → strafe left
+  if (keys['KeyD'] || keys['ArrowRight']) camera.position.addScaledVector(right, -spd);  // D → strafe right
   if (keys['KeyQ']) camera.position.addScaledVector(up, -spd);
   if (keys['KeyE']) camera.position.addScaledVector(up, spd);
-
-  // Scroll move
-  if (Math.abs(scrollBoost) > 0.001) {
-    camera.position.addScaledVector(dir, -scrollBoost * 3);
-  }
 
   camera.lookAt(camera.position.clone().add(dir));
 }
